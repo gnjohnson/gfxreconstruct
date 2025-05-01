@@ -21,25 +21,58 @@
 */
 
 #include "decode/vulkan_replay_dump_resources_delegate.h"
+#include "decode/vulkan_object_info.h"
 #include "decode/vulkan_replay_dump_resources_common.h"
+#include "generated/generated_vulkan_dispatch_table.h"
 #include "generated/generated_vulkan_enum_to_string.h"
 #include "util/buffer_writer.h"
 
 GFXRECON_BEGIN_NAMESPACE(gfxrecon)
 GFXRECON_BEGIN_NAMESPACE(decode)
 
-void DefaultVulkanDumpResourcesDelegate::DumpDrawCallInfo(const VulkanDumpDrawCallInfo& draw_call_info)
+bool DefaultVulkanDumpResourcesDelegate::IsImageDumpable(const graphics::VulkanInstanceTable* instance_table,
+                                                         const VulkanImageInfo*               image_info)
+{
+    GFXRECON_ASSERT(instance_table != nullptr);
+    GFXRECON_ASSERT(image_info != nullptr);
+
+    // Check for multisampled images that cannot be dumped
+    if (image_info->sample_count == VK_SAMPLE_COUNT_1_BIT)
+    {
+        return true;
+    }
+
+    if (instance_table != nullptr)
+    {
+        VulkanDeviceInfo* device = object_info_table_.GetVkDeviceInfo(image_info->parent_id);
+        if (device != nullptr)
+        {
+            VkFormatProperties format_properties{};
+            instance_table->GetPhysicalDeviceFormatProperties(device->parent, image_info->format, &format_properties);
+            if ((format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) !=
+                VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)
+            {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+void DefaultVulkanDumpResourcesDelegate::DumpDrawCallInfo(const VulkanDumpDrawCallInfo&        draw_call_info,
+                                                          const graphics::VulkanInstanceTable* instance_table)
 {
     switch (draw_call_info.type)
     {
         case DumpResourceType::kDrawCallInfo:
-            GenerateOutputJsonDrawCallInfo(draw_call_info);
+            GenerateOutputJsonDrawCallInfo(draw_call_info, instance_table);
             break;
         case DumpResourceType::kDispatchInfo:
-            GenerateOutputJsonDispatchInfo(draw_call_info);
+            GenerateOutputJsonDispatchInfo(draw_call_info, instance_table);
             break;
         case DumpResourceType::kTraceRaysIndex:
-            GenerateOutputJsonTraceRaysIndex(draw_call_info);
+            GenerateOutputJsonTraceRaysIndex(draw_call_info, instance_table);
             break;
         default:
             break;
@@ -138,11 +171,19 @@ VkResult DefaultVulkanDumpResourcesDelegate::DumpRenderTargetImage(const VulkanD
                                    options_.dump_resources_dump_raw_images,
                                    options_.dump_resources_dump_separate_alpha,
                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
     if (res != VK_SUCCESS)
     {
-        GFXRECON_LOG_ERROR("Dumping image failed (%s)", util::ToString<VkResult>(res).c_str())
-        return res;
+        if (res == VK_ERROR_FEATURE_NOT_PRESENT)
+        {
+            // Failures to dump images due to multisampling should be ok
+            GFXRECON_LOG_WARNING("Image could not be resolved (%s)",
+                                 util::ToString<VkFormat>(image_info->format).c_str())
+            return VK_SUCCESS;
+        }
+        else
+        {
+            GFXRECON_LOG_ERROR("Dumping image failed (%s)", util::ToString<VkResult>(res).c_str())
+        }
     }
 
     // Keep track of images for which scaling failed
@@ -280,8 +321,17 @@ VkResult DefaultVulkanDumpResourcesDelegate::DumpImageDescriptor(const VulkanDum
                                    image_info->intermediate_layout);
     if (res != VK_SUCCESS)
     {
-        GFXRECON_LOG_ERROR("Dumping image failed (%s)", util::ToString<VkResult>(res).c_str())
-        return res;
+        if (res == VK_ERROR_FEATURE_NOT_PRESENT)
+        {
+            // Failures to dump images due to multisampling should be ok
+            GFXRECON_LOG_WARNING("Image could not be resolved (%s)",
+                                 util::ToString<VkFormat>(image_info->format).c_str())
+            return VK_SUCCESS;
+        }
+        else
+        {
+            GFXRECON_LOG_ERROR("Dumping image failed (%s)", util::ToString<VkResult>(res).c_str())
+        }
     }
 
     // Keep track of images for which scaling failed
@@ -360,8 +410,9 @@ DefaultVulkanDumpResourcesDelegate::GenerateBufferDescriptorFilename(const Vulka
 {
     std::stringstream filename;
 
-    filename << capture_filename_ << "_" << "buffer_" << resource_info.buffer_info->capture_id << "_qs_"
-             << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_rp_" << resource_info.rp << ".bin";
+    filename << capture_filename_ << "_"
+             << "buffer_" << resource_info.buffer_info->capture_id << "_qs_" << resource_info.qs_index << "_bcb_"
+             << resource_info.bcb_index << "_rp_" << resource_info.rp << ".bin";
 
     std::filesystem::path filedirname(options_.dump_resources_output_dir);
     std::filesystem::path filebasename(filename.str());
@@ -381,9 +432,9 @@ std::string DefaultVulkanDumpResourcesDelegate::GenerateInlineUniformBufferDescr
     const VulkanDumpResourceInfo& resource_info) const
 {
     std::stringstream filename;
-    filename << capture_filename_ << "_" << "inlineUniformBlock_set_" << resource_info.set << "_binding_"
-             << resource_info.binding << "_qs_" << resource_info.qs_index << "_bcb_" << resource_info.bcb_index
-             << ".bin";
+    filename << capture_filename_ << "_"
+             << "inlineUniformBlock_set_" << resource_info.set << "_binding_" << resource_info.binding << "_qs_"
+             << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << ".bin";
 
     std::filesystem::path filedirname(options_.dump_resources_output_dir);
     std::filesystem::path filebasename(filename.str());
@@ -402,9 +453,10 @@ std::string
 DefaultVulkanDumpResourcesDelegate::GenerateVertexBufferFilename(const VulkanDumpResourceInfo& resource_info) const
 {
     std::stringstream filename;
-    filename << capture_filename_ << "_" << "vertexBuffers_" << "qs_" << resource_info.qs_index << "_bcb_"
-             << resource_info.bcb_index << "_dc_" << resource_info.cmd_index << "_binding_" << resource_info.binding
-             << ".bin";
+    filename << capture_filename_ << "_"
+             << "vertexBuffers_"
+             << "qs_" << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_dc_"
+             << resource_info.cmd_index << "_binding_" << resource_info.binding << ".bin";
 
     std::filesystem::path filedirname(options_.dump_resources_output_dir);
     std::filesystem::path filebasename(filename.str());
@@ -425,7 +477,8 @@ DefaultVulkanDumpResourcesDelegate::GenerateIndexBufferFilename(const VulkanDump
     std::stringstream filename;
     filename << capture_filename_ << "_";
     std::string index_type_name = IndexTypeToStr(resource_info.index_type);
-    filename << "indexBuffer_" << "qs_" << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_dc_"
+    filename << "indexBuffer_"
+             << "qs_" << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_dc_"
              << resource_info.cmd_index << index_type_name << ".bin";
 
     std::filesystem::path filedirname(options_.dump_resources_output_dir);
@@ -433,7 +486,8 @@ DefaultVulkanDumpResourcesDelegate::GenerateIndexBufferFilename(const VulkanDump
     return (filedirname / filebasename).string();
 }
 
-void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const VulkanDumpDrawCallInfo& draw_call_info)
+void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(
+    const VulkanDumpDrawCallInfo& draw_call_info, const graphics::VulkanInstanceTable* instance_table)
 {
     if (options_.dump_resources_json_per_command)
     {
@@ -596,6 +650,11 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
             const VulkanImageInfo* image_info = draw_call_info.render_targets->color_att_imgs[i];
             assert(image_info != nullptr);
 
+            if (!IsImageDumpable(instance_table, image_info))
+            {
+                continue;
+            }
+
             std::vector<VkImageAspectFlagBits> aspects;
             GetFormatAspects(image_info->format, aspects);
 
@@ -660,7 +719,8 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
 
     // Write depth attachment info
     if (options_.dump_resources_dump_depth && draw_call_info.render_targets != nullptr &&
-        draw_call_info.render_targets->depth_att_img != nullptr)
+        draw_call_info.render_targets->depth_att_img != nullptr &&
+        IsImageDumpable(instance_table, draw_call_info.render_targets->depth_att_img))
     {
         auto& depth_entries = draw_call_entry["depthAttachments"];
 
@@ -765,7 +825,8 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
         // Emmit bound index buffer info
         if (DrawCallsDumpingContext::IsDrawCallIndexed(draw_call_info.dc_param->type))
         {
-            if (draw_call_info.dc_param->referenced_index_buffer.buffer_info != nullptr)
+            if (draw_call_info.dc_param->json_output_info.index_buffer_info.dumped &&
+                draw_call_info.dc_param->referenced_index_buffer.buffer_info != nullptr)
             {
                 VulkanDumpResourceInfo res_info         = res_info_base;
                 res_info.type                           = DumpResourceType::kIndex;
@@ -777,7 +838,7 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
 
                 json_entry["bufferId"] = draw_call_info.dc_param->referenced_index_buffer.buffer_info->capture_id;
                 json_entry["file"]     = index_buffer_filename;
-                json_entry["offset"]   = draw_call_info.dc_param->index_buffer_dumped_at_offset;
+                json_entry["offset"]   = draw_call_info.dc_param->json_output_info.index_buffer_info.offset;
                 json_entry["indexType"] =
                     util::ToString<VkIndexType>(draw_call_info.dc_param->referenced_index_buffer.index_type);
             }
@@ -787,20 +848,25 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
         if (!draw_call_info.dc_param->referenced_vertex_buffers.bound_vertex_buffer_per_binding.empty() &&
             !draw_call_info.dc_param->vertex_input_state.vertex_input_binding_map.empty())
         {
-            auto& vertex_input_state_json_entry = draw_call_entry["vertexInputState"];
-            auto& json_entry                    = vertex_input_state_json_entry["vertexBuffers"];
-
             uint32_t i = 0;
             for (const auto& vb_binding : draw_call_info.dc_param->vertex_input_state.vertex_input_binding_map)
             {
-                const auto& vb_binding_buffer =
-                    draw_call_info.dc_param->referenced_vertex_buffers.bound_vertex_buffer_per_binding.find(
-                        vb_binding.first);
-                assert(vb_binding_buffer !=
-                       draw_call_info.dc_param->referenced_vertex_buffers.bound_vertex_buffer_per_binding.end());
-
-                if (vb_binding_buffer->second.buffer_info != nullptr)
+                const auto json_info_entry =
+                    draw_call_info.dc_param->json_output_info.vertex_bindings_info.find(vb_binding.first);
+                const bool buffer_dumped =
+                    json_info_entry != draw_call_info.dc_param->json_output_info.vertex_bindings_info.end();
+                if (buffer_dumped)
                 {
+                    auto& vertex_input_state_json_entry = draw_call_entry["vertexInputState"];
+                    auto& json_entry                    = vertex_input_state_json_entry["vertexBuffers"];
+
+                    const auto& vb_binding_buffer =
+                        draw_call_info.dc_param->referenced_vertex_buffers.bound_vertex_buffer_per_binding.find(
+                            vb_binding.first);
+                    assert(vb_binding_buffer !=
+                           draw_call_info.dc_param->referenced_vertex_buffers.bound_vertex_buffer_per_binding.end());
+                    GFXRECON_ASSERT(vb_binding_buffer->second.buffer_info != nullptr)
+
                     VulkanDumpResourceInfo res_info = res_info_base;
                     res_info.type                   = DumpResourceType::kVertex;
                     res_info.binding                = vb_binding.first;
@@ -809,12 +875,7 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
                     json_entry[i]["bufferId"]            = vb_binding_buffer->second.buffer_info->capture_id;
                     json_entry[i]["vertexBufferBinding"] = vb_binding.first;
                     json_entry[i]["file"]                = vb_filename;
-
-                    auto offset_entry = draw_call_info.dc_param->vertex_buffer_dumped_at_offset.find(vb_binding.first);
-                    if (offset_entry != draw_call_info.dc_param->vertex_buffer_dumped_at_offset.end())
-                    {
-                        json_entry[i]["offset"] = offset_entry->second;
-                    }
+                    json_entry[i]["offset"]              = json_info_entry->second.offset;
                     ++i;
                 }
             }
@@ -852,7 +913,7 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDrawCallInfo(const Vu
 
                                 const VulkanImageInfo* image_info = draw_call_info.object_info_table->GetVkImageInfo(
                                     img_desc.second.image_view_info->image_id);
-                                if (image_info == nullptr)
+                                if (image_info == nullptr || !IsImageDumpable(instance_table, image_info))
                                 {
                                     continue;
                                 }
@@ -1027,8 +1088,17 @@ VkResult DefaultVulkanDumpResourcesDelegate::DumpeDispatchTraceRaysImage(const V
                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     if (res != VK_SUCCESS)
     {
-        GFXRECON_LOG_ERROR("Dumping image failed (%s)", util::ToString<VkResult>(res).c_str())
-        return res;
+        if (res == VK_ERROR_FEATURE_NOT_PRESENT)
+        {
+            // Failures to dump images due to multisampling should be ok
+            GFXRECON_LOG_WARNING("Image could not be resolved (%s)",
+                                 util::ToString<VkFormat>(image_info->format).c_str())
+            return VK_SUCCESS;
+        }
+        else
+        {
+            GFXRECON_LOG_ERROR("Dumping image failed (%s)", util::ToString<VkResult>(res).c_str())
+        }
     }
 
     // Keep track of images for which scaling failed
@@ -1064,8 +1134,9 @@ std::string DefaultVulkanDumpResourcesDelegate::GenerateDispatchTraceRaysImageFi
     if (resource_info.before_cmd)
     {
         filename << (resource_info.is_dispatch ? "dispatch_" : "traceRays_") << resource_info.cmd_index << "_qs_"
-                 << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_before_" << "set_"
-                 << resource_info.set << "_binding_" << resource_info.binding << "_index_" << resource_info.array_index;
+                 << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_before_"
+                 << "set_" << resource_info.set << "_binding_" << resource_info.binding << "_index_"
+                 << resource_info.array_index;
         if (output_image_format != KFormatRaw)
         {
             filename << "_" << util::ToString<VkFormat>(image_info->format).c_str();
@@ -1115,9 +1186,9 @@ std::string DefaultVulkanDumpResourcesDelegate::GenerateDispatchTraceRaysBufferF
     if (resource_info.before_cmd)
     {
         filename << (resource_info.is_dispatch ? "dispatch_" : "traceRays_") << resource_info.cmd_index << "_qs_"
-                 << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_before_" << "set_"
-                 << resource_info.set << "_binding_" << resource_info.binding << "_index_" << resource_info.array_index
-                 << "_buffer.bin";
+                 << resource_info.qs_index << "_bcb_" << resource_info.bcb_index << "_before_"
+                 << "set_" << resource_info.set << "_binding_" << resource_info.binding << "_index_"
+                 << resource_info.array_index << "_buffer.bin";
     }
     else
     {
@@ -1291,7 +1362,8 @@ std::string DefaultVulkanDumpResourcesDelegate::GenerateDispatchTraceRaysInlineU
     return (filedirname / filebasename).string();
 }
 
-void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDispatchInfo(const VulkanDumpDrawCallInfo& draw_call_info)
+void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDispatchInfo(
+    const VulkanDumpDrawCallInfo& draw_call_info, const graphics::VulkanInstanceTable* instance_table)
 {
     if (draw_call_info.disp_param == nullptr)
     {
@@ -1766,7 +1838,8 @@ void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonDispatchInfo(const Vu
     }
 }
 
-void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonTraceRaysIndex(const VulkanDumpDrawCallInfo& draw_call_info)
+void DefaultVulkanDumpResourcesDelegate::GenerateOutputJsonTraceRaysIndex(
+    const VulkanDumpDrawCallInfo& draw_call_info, const graphics::VulkanInstanceTable* instance_table)
 {
     if (draw_call_info.tr_param == nullptr)
     {

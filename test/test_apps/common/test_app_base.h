@@ -1,5 +1,5 @@
 /*
-** Copyright (c) 2018-2024 LunarG, Inc.
+** Copyright (c) 2018-2025 LunarG, Inc.
 **
 ** Permission is hereby granted, free of charge, to any person obtaining a
 ** copy of this software and associated documentation files (the "Software"),
@@ -35,11 +35,17 @@
 
 #include <vulkan/vulkan_core.h>
 
+#ifndef __ANDROID__
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
+#endif
 
 #include "test_app_dispatch.h"
 #include "mock_icd_test_config.h"
+
+#if defined(__ANDROID__)
+#include <android_native_app_glue.h>
+#endif
 
 #ifdef VK_MAKE_API_VERSION
 #define VKB_MAKE_VK_VERSION(variant, major, minor, patch) VK_MAKE_API_VERSION(variant, major, minor, patch)
@@ -74,8 +80,10 @@ namespace gfxrecon
 namespace test
 {
 
-std::exception vulkan_exception(const char* message, VkResult result);
-std::exception sdl_exception();
+std::runtime_error vulkan_exception(const char* message, VkResult result);
+#ifndef __ANDROID__
+std::runtime_error sdl_exception();
+#endif
 
 namespace detail
 {
@@ -257,6 +265,8 @@ struct Instance
 
     // Return a loaded instance dispatch table
     vkb::InstanceDispatchTable make_table() const;
+
+    bool is_headless() const { return headless; }
 
   private:
     bool     headless                = false;
@@ -894,6 +904,10 @@ class SwapchainBuilder
     SwapchainBuilder& set_old_swapchain(VkSwapchainKHR old_swapchain);
     SwapchainBuilder& set_old_swapchain(Swapchain const& swapchain);
 
+    bool get_destroy_old_swapchain() const;
+    // Specify what to do with the old swapchain after creating a new swapchain.
+    SwapchainBuilder& set_destroy_old_swapchain(bool destroy);
+
     // Desired size of the swapchain. By default, the swapchain will use the size
     // of the window being drawn to.
     SwapchainBuilder& set_desired_extent(uint32_t width, uint32_t height);
@@ -1006,15 +1020,18 @@ class SwapchainBuilder
         VkCompositeAlphaFlagBitsKHR composite_alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 #endif
         std::vector<VkPresentModeKHR> desired_present_modes;
-        bool                          clipped              = true;
-        VkSwapchainKHR                old_swapchain        = VK_NULL_HANDLE;
-        VkAllocationCallbacks*        allocation_callbacks = VK_NULL_HANDLE;
+        bool                          clipped               = true;
+        VkSwapchainKHR                old_swapchain         = VK_NULL_HANDLE;
+        bool                          destroy_old_swapchain = true;
+        VkAllocationCallbacks*        allocation_callbacks  = VK_NULL_HANDLE;
     } info;
 };
 
+#ifndef __ANDROID__
 SDL_Window*  create_window_sdl(const char* window_name, bool resizable, int width, int height);
 void         destroy_window_sdl(SDL_Window* window);
 VkSurfaceKHR create_surface_sdl(VkInstance instance, SDL_Window* window, VkAllocationCallbacks* allocator = nullptr);
+#endif
 VkSurfaceKHR create_surface_headless(VkInstance                  instance,
                                      vkb::InstanceDispatchTable& disp,
                                      VkAllocationCallbacks*      callbacks = nullptr);
@@ -1041,22 +1058,34 @@ struct Sync
 
 Sync create_sync_objects(Swapchain const& swapchain, vkb::DispatchTable const& disp, const int max_frames_in_flight);
 
+#ifdef __ANDROID__
+std::vector<char> readFile(const std::string& filename, android_app*);
+#else
 std::vector<char> readFile(const std::string& filename);
+#endif
 
 VkShaderModule createShaderModule(vkb::DispatchTable const& disp, const std::vector<char>& code);
 
+#ifdef __ANDROID__
+VkShaderModule readShaderFromFile(vkb::DispatchTable const& disp, const std::string& filename, android_app*);
+#else
 VkShaderModule readShaderFromFile(vkb::DispatchTable const& disp, const std::string& filename);
+#endif
 
-#define VERIFY_VK_RESULT(message, result)                                             \
-    {                                                                                 \
+#define VERIFY_VK_RESULT(message, result)                                               \
+    {                                                                                   \
         VkResult verify_vk_result_result = (result);                                    \
-        if (verify_vk_result_result != VK_SUCCESS)                                    \
+        if (verify_vk_result_result != VK_SUCCESS)                                      \
             throw gfxrecon::test::vulkan_exception((message), verify_vk_result_result); \
     }
 
 struct InitInfo
 {
-    SDL_Window*                window;
+#ifdef __ANDROID__
+    android_app* android_app;
+#else
+    SDL_Window* window;
+#endif
     Instance                   instance;
     vkb::InstanceDispatchTable inst_disp;
     VkSurfaceKHR               surface;
@@ -1080,6 +1109,9 @@ class TestAppBase
   public:
     void run(const std::string& window_name);
 
+#ifdef __ANDROID__
+    void set_android_app(struct android_app*);
+#endif
   protected:
     TestAppBase()                              = default;
     ~TestAppBase()                             = default;
@@ -1094,9 +1126,14 @@ class TestAppBase
     virtual bool frame(const int frame_num) = 0;
     virtual void cleanup();
     virtual void configure_instance_builder(InstanceBuilder& instance_builder, vkmock::TestConfig* test_config);
-    virtual void configure_physical_device_selector(PhysicalDeviceSelector& phys_device_selector, vkmock::TestConfig* test_config);
-    virtual void configure_device_builder(DeviceBuilder& device_builder, PhysicalDevice const& physical_device, vkmock::TestConfig* test_config);
+    virtual void configure_physical_device_selector(PhysicalDeviceSelector& phys_device_selector,
+                                                    vkmock::TestConfig*     test_config);
+    virtual void configure_device_builder(DeviceBuilder&        device_builder,
+                                          PhysicalDevice const& physical_device,
+                                          vkmock::TestConfig*   test_config);
     virtual void configure_swapchain_builder(SwapchainBuilder& swapchain_builder, vkmock::TestConfig* test_config);
+
+    uint32_t find_memory_type(uint32_t memoryTypeBits, VkMemoryPropertyFlags memory_property_flags);
 
     InitInfo init;
 };

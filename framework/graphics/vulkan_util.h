@@ -40,6 +40,8 @@
 GFXRECON_BEGIN_NAMESPACE(gfxrecon)
 GFXRECON_BEGIN_NAMESPACE(graphics)
 
+typedef uint64_t PresentId;
+
 const std::vector<std::string> kLoaderLibNames = {
 #if defined(WIN32)
     "vulkan-1.dll"
@@ -53,6 +55,8 @@ const std::vector<std::string> kLoaderLibNames = {
 util::platform::LibraryHandle InitializeLoader();
 
 void ReleaseLoader(util::platform::LibraryHandle loader_handle);
+
+bool ImageHasUsage(VkImageUsageFlags usage_flags, VkImageUsageFlagBits bit);
 
 [[maybe_unused]] static const char* kVulkanVrFrameDelimiterString = "vr-marker,frame_end,type,application";
 

@@ -31,6 +31,12 @@
 #include "decode/vulkan_tracked_object_info_table.h"
 #include "decode/vulkan_pre_process_consumer.h"
 #include "format/format.h"
+
+#if ENABLE_OPENXR_SUPPORT
+#include "decode/openxr_tracked_object_info_table.h"
+#include "generated/generated_openxr_decoder.h"
+#include "generated/generated_openxr_replay_consumer.h"
+#endif
 #include "generated/generated_vulkan_decoder.h"
 #include "generated/generated_vulkan_replay_consumer.h"
 #include "util/argument_parser.h"
@@ -78,6 +84,7 @@ extern "C"
 
 void android_main(struct android_app* app)
 {
+    GFXRECON_WRITE_CONSOLE("====== Entering android_main");
     gfxrecon::util::Log::Init();
 
     // Keep screen on while window is active.
@@ -150,14 +157,12 @@ void android_main(struct android_app* app)
                     RunPreProcessConsumer(filename, api_replay_options, api_replay_consumer);
                 }
 
-                uint32_t                               start_frame, end_frame;
-                bool        has_mfr = GetMeasurementFrameRange(arg_parser, start_frame, end_frame);
-                std::string measurement_file_name;
+                uint32_t measurement_start_frame;
+                uint32_t measurement_end_frame;
+                bool     has_mfr = GetMeasurementFrameRange(arg_parser, measurement_start_frame, measurement_end_frame);
 
-                if (has_mfr)
-                {
-                    GetMeasurementFilename(arg_parser, measurement_file_name);
-                }
+                std::string measurement_file_name;
+                GetMeasurementFilename(arg_parser, measurement_file_name);
 
                 bool     quit_after_frame = false;
                 uint32_t quit_frame;
@@ -168,8 +173,8 @@ void android_main(struct android_app* app)
                     GetQuitAfterFrame(arg_parser, quit_frame);
                 }
 
-                gfxrecon::graphics::FpsInfo fps_info(static_cast<uint64_t>(start_frame),
-                                                     static_cast<uint64_t>(end_frame),
+                gfxrecon::graphics::FpsInfo fps_info(static_cast<uint64_t>(measurement_start_frame),
+                                                     static_cast<uint64_t>(measurement_end_frame),
                                                      has_mfr,
                                                      replay_options.quit_after_measurement_frame_range,
                                                      replay_options.flush_measurement_frame_range,
@@ -188,10 +193,20 @@ void android_main(struct android_app* app)
                 file_processor->AddDecoder(&vulkan_decoder);
 
                 file_processor->SetPrintBlockInfoFlag(replay_options.enable_print_block_info,
-                    replay_options.block_index_from,
-                    replay_options.block_index_to);
+                                                      replay_options.block_index_from,
+                                                      replay_options.block_index_to);
 
                 application->SetPauseFrame(GetPauseFrame(arg_parser));
+
+#if ENABLE_OPENXR_SUPPORT
+                gfxrecon::decode::OpenXrReplayOptions  openxr_replay_options = {};
+                gfxrecon::decode::OpenXrDecoder        openxr_decoder;
+                gfxrecon::decode::OpenXrReplayConsumer openxr_replay_consumer(application, openxr_replay_options);
+                openxr_replay_consumer.SetVulkanReplayConsumer(&vulkan_replay_consumer);
+                openxr_replay_consumer.SetAndroidApp(app);
+                openxr_decoder.AddConsumer(&openxr_replay_consumer);
+                file_processor->AddDecoder(&openxr_decoder);
+#endif
 
                 // Warn if the capture layer is active.
                 CheckActiveLayers(kLayerProperty);
@@ -213,17 +228,17 @@ void android_main(struct android_app* app)
                 if ((file_processor->GetCurrentFrameNumber() > 0) &&
                     (file_processor->GetErrorState() == gfxrecon::decode::FileProcessor::kErrorNone))
                 {
-                    if (file_processor->GetCurrentFrameNumber() < start_frame)
+                    if (file_processor->GetCurrentFrameNumber() < measurement_start_frame)
                     {
                         GFXRECON_LOG_WARNING(
                             "Measurement range start frame (%u) is greater than the last replayed frame (%u). "
                             "Measurements were never started, cannot calculate measurement range FPS.",
-                            start_frame,
+                            measurement_start_frame,
                             file_processor->GetCurrentFrameNumber());
                     }
                     else
                     {
-                        fps_info.LogToConsole();
+                        fps_info.LogMeasurements();
                     }
                 }
                 else if (file_processor->GetErrorState() != gfxrecon::decode::FileProcessor::kErrorNone)

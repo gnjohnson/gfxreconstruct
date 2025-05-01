@@ -756,6 +756,19 @@ class D3D12CaptureManager : public ApiCaptureManager
                                                             const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC* pDepthStencil,
                                                             D3D12_RENDER_PASS_FLAGS                     Flags);
 
+    HRESULT OverrideD3D12CreateVersionedRootSignatureDeserializerFromSubobjectInLibrary(
+        LPCVOID pSrcData,
+        SIZE_T  SrcDataSizeInBytes,
+        LPCWSTR RootSignatureSubobjectName,
+        REFIID  pRootSignatureDeserializerInterface,
+        void**  ppRootSignatureDeserializer);
+
+    void OverrideID3D12GraphicsCommandList10_SetProgram(ID3D12GraphicsCommandList10_Wrapper* wrapper,
+                                                        const D3D12_SET_PROGRAM_DESC*        pDesc);
+
+    void OverrideID3D12GraphicsCommandList10_DispatchGraph(ID3D12GraphicsCommandList10_Wrapper* wrapper,
+                                                           const D3D12_DISPATCH_GRAPH_DESC*     pDesc);
+
     virtual CaptureSettings::TraceSettings GetDefaultTraceSettings();
 
     inline format::HandleId GetEnableDebugLayerObjectId() { return track_enable_debug_layer_object_id_; }
@@ -840,6 +853,11 @@ class D3D12CaptureManager : public ApiCaptureManager
         IDXGISwapChain_Wrapper* wrapper, HRESULT result, DXGI_HDR_METADATA_TYPE Type, UINT Size, void* pMetaData);
 
     void PostProcess_SetName(IUnknown_Wrapper* wrapper, HRESULT result, LPCWSTR Name);
+
+    void PostProcess_InitializeMetaCommand(ID3D12GraphicsCommandList4_Wrapper* wrapper,
+                                           ID3D12MetaCommand*                  pMetaCommand,
+                                           const void*                         pInitializationParametersData,
+                                           SIZE_T                              InitializationParametersDataSizeInBytes);
 
   protected:
     D3D12CaptureManager();
