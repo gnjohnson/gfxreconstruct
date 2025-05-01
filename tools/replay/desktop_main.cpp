@@ -306,7 +306,7 @@ int main(int argc, const char** argv)
                 }
                 else
                 {
-#if defined(D3D12_SUPPORT)
+#if 0// defined(D3D12_SUPPORT)
                     dx12_replay_consumer.PostReplay();
                     if (!dx_replay_options.screenshot_ranges.empty() && !file_processor->UsesFrameMarkers() &&
                         (dx12_replay_consumer.GetDXGITestPresentCount() > 0))
@@ -349,7 +349,10 @@ int main(int argc, const char** argv)
         return_code = -1;
     }
 
-    WaitForExit();
+    if (arg_parser.IsOptionSet(kNoWaitForExit))
+    {
+        WaitForExit();
+    }
 
     gfxrecon::util::Log::Release();
 

@@ -121,6 +121,18 @@ Dx12ReplayConsumerBase::Dx12ReplayConsumerBase(std::shared_ptr<application::Appl
     SetAgsMarkerInjector();
 #endif
 
+    //switch (options.swapchain_option)
+    //{
+    //    case util::SwapchainOption::kCaptured:
+    //        //swapchain_ = std::make_unique<VulkanCapturedSwapchain>();
+    //        break;
+    //    case util::SwapchainOption::kOffscreen:
+    //        //swapchain_ = std::make_unique<VulkanOffscreenSwapchain>();
+    //        break;
+    //    default:
+    //        //swapchain_ = std::make_unique<VulkanVirtualSwapchain>();
+    //}
+
     DetectAdapters();
 
     auto get_object_func = std::bind(&Dx12ReplayConsumerBase::GetObjectInfo, this, std::placeholders::_1);

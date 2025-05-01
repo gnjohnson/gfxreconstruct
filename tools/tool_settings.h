@@ -65,6 +65,7 @@ const char kLogFileArgument[]                    = "--log-file";
 const char kLogDebugView[]                       = "--log-debugview";
 const char kNoDebugPopup[]                       = "--no-debug-popup";
 const char kCpuMaskArgument[]                    = "--cpu-mask";
+const char kNoWaitForExit[]                      = "--no-wait-for-exit";
 const char kOverrideGpuArgument[]                = "--gpu";
 const char kOverrideGpuGroupArgument[]           = "--gpu-group";
 const char kPausedOption[]                       = "--paused";

@@ -5101,6 +5101,7 @@ VulkanReplayConsumerBase::OverrideCreateBuffer(PFN_vkCreateBuffer               
         // VK_BUFFER_USAGE_TRANSFER_SRC_BIT to keep things consistent with capture.
         auto modified_create_info = const_cast<VkBufferCreateInfo*>(replay_create_info);
         modified_create_info->usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        modified_create_info->usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;//GJ: We also need this so we can copy the original values INTO the buffer..
     }
 
     if (device_info->property_feature_info.feature_bufferDeviceAddressCaptureReplay &&
@@ -9919,12 +9920,12 @@ void VulkanReplayConsumerBase::OverrideUpdateDescriptorSets(
     uint32_t                                            descriptor_write_count,
     StructPointerDecoder<Decoded_VkWriteDescriptorSet>* p_descriptor_writes,
     uint32_t                                            descriptor_copy_count,
-    StructPointerDecoder<Decoded_VkCopyDescriptorSet>*  p_pescriptor_copies)
+    StructPointerDecoder<Decoded_VkCopyDescriptorSet>*  p_descriptor_copies)
 {
     GFXRECON_ASSERT(device_info != nullptr);
 
     VkWriteDescriptorSet* in_pDescriptorWrites = p_descriptor_writes->GetPointer();
-    VkCopyDescriptorSet*  in_pDescriptorCopies = p_pescriptor_copies->GetPointer();
+    VkCopyDescriptorSet*  in_pDescriptorCopies = p_descriptor_copies->GetPointer();
 
     {
         // check/correct specific resource handles (i.e. VkAccelerationStructure)
@@ -10027,6 +10028,29 @@ void VulkanReplayConsumerBase::OverrideUpdateDescriptorSets(
                     default:
                         break;
                 }
+            }
+        }
+
+        const auto* copies_meta = p_descriptor_copies->GetMetaStructPointer();
+        for (uint32_t s = 0; s < descriptor_copy_count; ++s)
+        {
+            VulkanDescriptorSetInfo* dst_set_info = GetObjectInfoTable().GetVkDescriptorSetInfo(copies_meta[s].dstSet);
+            VulkanDescriptorSetInfo* src_set_info = GetObjectInfoTable().GetVkDescriptorSetInfo(copies_meta[s].srcSet);
+            
+            assert(dst_set_info != nullptr);
+            assert(src_set_info != nullptr);
+
+            //for (uint32_t b = 0; b < in_pDescriptorCopies[s].descriptorCount; ++b)
+            {
+                const VkCopyDescriptorSet* copy = copies_meta[s].decoded_value;
+                assert(copy != nullptr);
+                
+                const uint32_t binding = copy->dstBinding;
+                
+                GFXRECON_ASSERT(dst_set_info->descriptors.find(binding) != dst_set_info->descriptors.end());
+                //assert(desc_set_info->descriptors[binding].desc_type == copy->descriptorType);
+
+                dst_set_info->descriptors[binding] = src_set_info->descriptors[binding];
             }
         }
     }

@@ -86,7 +86,7 @@ class Application final
 
     uint32_t GetCurrentFrameNumber() const
     {
-        return file_processor_->GetCurrentFrameNumber();
+        return (uint32_t)file_processor_->GetCurrentFrameNumber();
     }
 
   private:

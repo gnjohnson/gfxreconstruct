@@ -717,13 +717,56 @@ VkResult DrawCallsDumpingContext::DumpDrawCalls(
         si.signalSemaphoreCount = (cb == (n_drawcalls - 1)) ? submit_info.signalSemaphoreCount : 0;
         si.pSignalSemaphores    = (cb == (n_drawcalls - 1)) ? submit_info.pSignalSemaphores : nullptr;
 
+        // If there is only 1 command buffer, we can just use the pNextChain directly.
+        if (n_drawcalls == 1)
+        {
+            si.pNext = submit_info.pNext;
+        }
+        // otherwise, we need to split the timeline semaphore submit info
+        else
+        {
+            // There might be a VkTimelineSemaphoreSubmitInfo to link.
+            VkTimelineSemaphoreSubmitInfo timelineInfo = {};
+
+            struct VkAnyStruct
+            {
+                VkStructureType sType;
+                void*           pNext;
+            };
+            // Search the pNext chain for a timeline semaphore submit info.
+            VkAnyStruct* pStruct = (VkAnyStruct*)submit_info.pNext;
+            while (pStruct != nullptr)
+            {
+                if (pStruct->sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO)
+                {
+                    VkTimelineSemaphoreSubmitInfo* ti    = (VkTimelineSemaphoreSubmitInfo*)pStruct;
+                    timelineInfo.sType                   = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+                    timelineInfo.pNext                   = nullptr;
+                    timelineInfo.waitSemaphoreValueCount = !cb ? ti->waitSemaphoreValueCount : 0;
+                    timelineInfo.pWaitSemaphoreValues    = !cb ? ti->pWaitSemaphoreValues : nullptr;
+                    timelineInfo.signalSemaphoreValueCount =
+                        (cb == (n_drawcalls - 1)) ? ti->signalSemaphoreValueCount : 0;
+                    timelineInfo.pSignalSemaphoreValues =
+                        (cb == (n_drawcalls - 1)) ? ti->pSignalSemaphoreValues : nullptr;
+
+                    si.pNext = &timelineInfo;
+                }
+                else
+                {
+                    GFXRECON_LOG_WARNING("Unhandled VkSubmitInfo pNext (%u)", pStruct->sType);
+                }
+                pStruct = (VkAnyStruct*)pStruct->pNext;
+            }
+        }
+
         const VulkanDeviceInfo* device_info =
             object_info_table.GetVkDeviceInfo(original_command_buffer_info->parent_id);
         assert(device_info);
 
         const VkFenceCreateInfo ci = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0 };
         VkFence                 submission_fence;
-        if (fence == VK_NULL_HANDLE)
+        const bool              createFence = fence == VK_NULL_HANDLE || n_drawcalls > 1;
+        if (createFence)
         {
             VkResult res = device_table->CreateFence(device_info->handle, &ci, nullptr, &submission_fence);
             if (res != VK_SUCCESS)
@@ -731,6 +774,14 @@ VkResult DrawCallsDumpingContext::DumpDrawCalls(
                 GFXRECON_LOG_ERROR("CreateFence failed with %s", util::ToString<VkResult>(res).c_str());
                 return res;
             }
+            VulkanResourceAllocator* allocator = device_info->allocator.get();
+            
+			VkDebugUtilsObjectNameInfoEXT nameInfo = {};
+			nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+			nameInfo.objectType = VK_OBJECT_TYPE_FENCE;
+			nameInfo.objectHandle = (uint64_t)submission_fence;
+			nameInfo.pObjectName = "MySubmissionFence";
+            allocator->SetDebugUtilsObjectNameEXT(device_info->handle, &nameInfo, 0/*unused*/);
         }
         else
         {
@@ -740,6 +791,10 @@ VkResult DrawCallsDumpingContext::DumpDrawCalls(
         VkResult res = device_table->QueueSubmit(queue, 1, &si, submission_fence);
         if (res != VK_SUCCESS)
         {
+            if (createFence)
+            {
+                device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+            }
             GFXRECON_LOG_ERROR(
                 "(%s:%u) QueueSubmit failed with %s", __FILE__, __LINE__, util::ToString<VkResult>(res).c_str());
             return res;
@@ -749,12 +804,15 @@ VkResult DrawCallsDumpingContext::DumpDrawCalls(
         res = device_table->WaitForFences(device_info->handle, 1, &submission_fence, VK_TRUE, ~0UL);
         if (res != VK_SUCCESS)
         {
-            device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+            if (createFence)
+            {
+                device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+            }
             GFXRECON_LOG_ERROR("WaitForFences failed with %s", util::ToString<VkResult>(res).c_str());
             return res;
         }
 
-        if (fence == VK_NULL_HANDLE)
+        if (createFence)
         {
             device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
         }

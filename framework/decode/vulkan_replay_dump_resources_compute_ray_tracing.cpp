@@ -752,7 +752,7 @@ VkResult DispatchTraceRaysDumpingContext::DumpDispatchTraceRays(
 {
     VkSubmitInfo si;
     si.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.pNext                = nullptr;
+    si.pNext                = submit_info.pNext; //There might be a VkTimelineSemaphoreSubmitInfo to link.
     si.waitSemaphoreCount   = submit_info.waitSemaphoreCount;
     si.pWaitSemaphores      = submit_info.pWaitSemaphores;
     si.pWaitDstStageMask    = submit_info.pWaitDstStageMask;
@@ -768,7 +768,8 @@ VkResult DispatchTraceRaysDumpingContext::DumpDispatchTraceRays(
 
     const VkFenceCreateInfo ci               = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0 };
     VkFence                 submission_fence = VK_NULL_HANDLE;
-    if (fence == VK_NULL_HANDLE)
+    const bool              createFence      = true;//fence == VK_NULL_HANDLE;
+    if (createFence)
     {
         res = device_table->CreateFence(device_info->handle, &ci, nullptr, &submission_fence);
         if (res != VK_SUCCESS)
@@ -776,6 +777,14 @@ VkResult DispatchTraceRaysDumpingContext::DumpDispatchTraceRays(
             GFXRECON_LOG_ERROR("CreateFence failed with %s", util::ToString<VkResult>(res).c_str());
             return res;
         }
+        VulkanResourceAllocator* allocator = device_info->allocator.get();
+            
+		VkDebugUtilsObjectNameInfoEXT nameInfo = {};
+		nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+		nameInfo.objectType = VK_OBJECT_TYPE_FENCE;
+		nameInfo.objectHandle = (uint64_t)submission_fence;
+		nameInfo.pObjectName = "MySubmissionFence";
+        allocator->SetDebugUtilsObjectNameEXT(device_info->handle, &nameInfo, 0/*unused*/);
     }
     else
     {
@@ -785,7 +794,10 @@ VkResult DispatchTraceRaysDumpingContext::DumpDispatchTraceRays(
     res = device_table->QueueSubmit(queue, 1, &si, submission_fence);
     if (res != VK_SUCCESS)
     {
-        device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+        if(createFence)
+        {
+            device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+        }
         GFXRECON_LOG_ERROR(
             "(%s:%u) QueueSubmit failed with %s", __FILE__, __LINE__, util::ToString<VkResult>(res).c_str());
         return res;
@@ -795,12 +807,15 @@ VkResult DispatchTraceRaysDumpingContext::DumpDispatchTraceRays(
     res = device_table->WaitForFences(device_info->handle, 1, &submission_fence, VK_TRUE, ~0UL);
     if (res != VK_SUCCESS)
     {
-        device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+        if(createFence)
+        {
+            device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
+        }
         GFXRECON_LOG_ERROR("WaitForFences failed with %s", util::ToString<VkResult>(res).c_str());
         return res;
     }
 
-    if (fence == VK_NULL_HANDLE)
+    if (createFence)
     {
         device_table->DestroyFence(device_info->handle, submission_fence, nullptr);
     }
