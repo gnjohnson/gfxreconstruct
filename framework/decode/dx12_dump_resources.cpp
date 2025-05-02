@@ -2613,7 +2613,15 @@ void DefaultDx12DumpResourcesDelegate::WriteResource(nlohmann::ordered_json&   j
         util::FieldToJson(jdata_sub[json_path], file_name_sub.c_str(), json_options_);
 
         std::string file_path = gfxrecon::util::filepath::Join(json_options_.root_dir, file_name_sub);
-        WriteBinaryFile(file_path, resource_data->datas[sub_index], offset, size);
+        //GJ_EDIT: If the same resource is bound multiple times with different ranges, only the last range will be saved. 
+        // - We have a few choices
+        // 1) we can either write a different file for each range (do we use root parameter index in the file path?)
+        // 2) we find the min/max used bytes of the file and write that out.
+        // 3) we just write the entire file, skipping any space saving optimisation.
+        // For now, we go option 3 because it's the simplest.
+        //WriteBinaryFile(file_path, resource_data->datas[sub_index], offset, size);
+        WriteBinaryFile(file_path, resource_data->datas[sub_index], 0, resource_data->total_size);
+        //GJ_END
         ++json_sub_index;
     }
 }
