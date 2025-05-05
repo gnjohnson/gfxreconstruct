@@ -2620,7 +2620,10 @@ void DefaultDx12DumpResourcesDelegate::WriteResource(nlohmann::ordered_json&   j
         // 3) we just write the entire file, skipping any space saving optimisation.
         // For now, we go option 3 because it's the simplest.
         //WriteBinaryFile(file_path, resource_data->datas[sub_index], offset, size);
-        WriteBinaryFile(file_path, resource_data->datas[sub_index], 0, resource_data->total_size);
+        if (resource_data->desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+            WriteBinaryFile(file_path, resource_data->datas[sub_index], 0, resource_data->total_size);
+        else
+            WriteBinaryFile(file_path, resource_data->datas[sub_index], offset, size);//@note: images need to write the mip level size.
         //GJ_END
         ++json_sub_index;
     }
