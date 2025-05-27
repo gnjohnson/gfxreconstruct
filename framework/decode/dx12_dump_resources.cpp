@@ -1109,6 +1109,19 @@ void Dx12DumpResources::WriteDescripotTable(DxObjectInfo*                       
         auto info_entry = heap_info->cbv_srv_uav_infos.find(heap_index);
         if (info_entry == heap_info->cbv_srv_uav_infos.end())
         {
+            //GJ_EDIT:
+            auto sampler_info_entry = heap_info->sampler_infos.find(heap_index);
+            if (sampler_info_entry != heap_info->sampler_infos.end())
+            {
+                json_path_sub = json_path;
+                json_path_sub.emplace_back("descs", json_index);
+                ++json_index;
+                //GJ_EDIT:
+                active_delegate_->WriteNULLResource(json_path_sub, heap_id, heap_index);
+
+                continue;
+            }
+
             if (TEST_WRITE_NOT_FOUND_VIEWS)
             {
                 json_path_sub = json_path;
@@ -1280,6 +1293,8 @@ void Dx12DumpResources::WriteRootParameters(DxObjectInfo*                       
                         json_path, "descriptor_heap_type", util::ToString(heap_extra_info->descriptor_type));
                     switch (heap_extra_info->descriptor_type)
                     {
+                        //GJ_EDIT:
+                        case D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER://fallthrough.
                         case D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV:
                         {
                             if (param.second.root_signature_type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
