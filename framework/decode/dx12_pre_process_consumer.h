@@ -66,7 +66,10 @@ enum class DumpDrawCallType
     kDraw,
     kDispatch,
     kIndirect,
-    kBundle
+    kBundle,
+    //GJ_EDIT:
+    kDispatchMesh,
+    //GJ_END
 };
 
 struct TrackDumpDrawCall
@@ -755,6 +758,20 @@ class Dx12PreProcessConsumer : public Dx12Consumer
                             0,
                             pCommandList);
     }
+
+    //GJ_EDIT:
+    virtual void Process_ID3D12GraphicsCommandList6_DispatchMesh(
+        const ApiCallInfo& call_info,
+        format::HandleId object_id,
+        UINT ThreadGroupCountX,
+        UINT ThreadGroupCountY,
+        UINT ThreadGroupCountZ) override
+    {
+        TrackTargetDrawCall(call_info,
+                            object_id,
+                            DumpDrawCallType::kDispatchMesh);
+    }
+    //GJ_END
 
     virtual void Process_ID3D12GraphicsCommandList_Close(const ApiCallInfo& call_info,
                                                          format::HandleId   object_id,

@@ -1419,6 +1419,11 @@ void Dx12DumpResources::CopyDrawCallResources(DxObjectInfo*                     
         case DumpDrawCallType::kIndirect:
             drawcall_type_name += "indirect";
             break;
+            //GJ_EDIT:
+        case DumpDrawCallType::kDispatchMesh:
+            drawcall_type_name += "dispatch_mesh";
+            break;
+            //GJ_END
         default:
             // It shouldn't be kBundle or kUnknown
             break;
@@ -1427,7 +1432,7 @@ void Dx12DumpResources::CopyDrawCallResources(DxObjectInfo*                     
 
     // We're about to dump vertex and index buffers. If we are only dumping modifiable resources,
     // skip the dump because vertex/index buffers are not modifiable resources.
-    if (!options_.dump_resources_modifiable_state_only && drawcall_type != DumpDrawCallType::kDispatch)
+    if (!options_.dump_resources_modifiable_state_only && drawcall_type != DumpDrawCallType::kDispatch && /*GJ_EDIT: (no IA for mesh shaders)*/ drawcall_type != DumpDrawCallType::kDispatchMesh)
     {
         // vertex
         const std::vector<D3D12_VERTEX_BUFFER_VIEW>* vertex_buffer_views = nullptr;
@@ -1506,7 +1511,9 @@ void Dx12DumpResources::CopyDrawCallResources(DxObjectInfo*                     
         descriptor_heap_ids = &track_dump_resources_.target.descriptor_heap_ids;
     }
 
-    if (descriptor_heap_ids && !descriptor_heap_ids->empty())
+    //GJ_EDIT: It's possible to not have any descriptor heaps and just use root descriptors.
+    //if (descriptor_heap_ids && !descriptor_heap_ids->empty())
+    if ((descriptor_heap_ids && !descriptor_heap_ids->empty()) || !track_dump_resources_.target.graphics_root_parameters.empty() || !track_dump_resources_.target.compute_root_parameters.empty())
     {
         bool bundle_write_root_params = false;
 
@@ -1514,6 +1521,9 @@ void Dx12DumpResources::CopyDrawCallResources(DxObjectInfo*                     
         {
             switch (bundle_target_draw_call->drawcall_type)
             {
+                //GJ_EDIT:
+                case DumpDrawCallType::kDispatchMesh:
+                //GJ_END
                 case DumpDrawCallType::kDraw:
                 {
                     if (!bundle_target_draw_call->graphics_root_parameters.empty())
@@ -1586,6 +1596,8 @@ void Dx12DumpResources::CopyDrawCallResources(DxObjectInfo*                     
             }
             switch (target_drawcall_type)
             {
+                // GJ_EDIT:
+                case DumpDrawCallType::kDispatchMesh:
                 case DumpDrawCallType::kDraw:
                 {
                     if (!track_dump_resources_.target.graphics_root_parameters.empty())
